@@ -1,15 +1,21 @@
 import os
 import telebot
 import requests
-from dotenv import load_dotenv
+from flask import Flask, request
 from telebot import types
 
-load_dotenv()
+# Не потрібно load_dotenv для Vercel, але можна залишити для локального запуску
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 GOOGLE_MAPS_API_KEY = os.getenv('GOOGLE_MAPS_API_KEY')
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+app = Flask(__name__)
 
 def get_location_name(lat, lon, api_key):
     url = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -27,14 +33,13 @@ def get_location_name(lat, lon, api_key):
 def search_truck_repair_shops(lat, lon, radius=50000):
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     params = {
-    'location': f'{lat},{lon}',
-    'radius': radius,
-    'type': 'car_repair',
-    'keyword': 'вантажівка TIR truck',
-    'key': GOOGLE_MAPS_API_KEY,
-    'language': 'uk, en'
-}
-
+        'location': f'{lat},{lon}',
+        'radius': radius,
+        'type': 'car_repair',
+        'keyword': 'вантажівка TIR truck',
+        'key': GOOGLE_MAPS_API_KEY,
+        'language': 'uk, en'
+    }
     response = requests.get(url, params=params)
     print("Places API result:", response.json())  # Для дебагу
     return response.json()
@@ -49,16 +54,12 @@ def format_repair_shops_message(results, user_lat, user_lon):
     for place in results['results'][:10]:
         name = place.get('name', 'Невідоме СТО')
         address = place.get('vicinity', 'Адреса не вказана')
-        # Формування посилання по назві
         name_query = urllib.parse.quote_plus(name)
         maps_url = f"https://www.google.com/maps/search/?api=1&query={name_query}"
         message += f"🏁 {name}\n"
         message += f"📍 {address}\n"
         message += f"🌐 [Карта: {name}]({maps_url})\n\n"
     return message
-
-
-
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -144,6 +145,23 @@ def send_help(message):
     """
     bot.send_message(message.chat.id, help_text, parse_mode='Markdown')
 
+# === FLASK WEBHOOK ===
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('content-type') == 'application/json':
+        json_string = request.get_data().decode('utf-8')
+        update = telebot.types.Update.de_json(json_string)
+        bot.process_new_updates([update])
+        return '', 200
+    else:
+        return '', 403
+
+@app.route('/', methods=['GET'])
+def index():
+    return "WestTransBot is running!", 200
+
+# === END FLASK WEBHOOK ===
+
+# Для локального запуску (не потрібно для Vercel)
 if __name__ == '__main__':
-    print("🚛 Бот СТО запущено...")
-    bot.infinity_polling()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
